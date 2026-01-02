@@ -1,13 +1,14 @@
 import streamlit as st
-from pypdf import PdfReader  # 改用 pypdf，比 PyPDF2 更现代
+from pypdf import PdfReader
 
-# === 🛠️ 2025 最新版 LangChain 引用标准 ===
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+# === 🛠️ 2025 终极修正版引用 ===
+# 专门从新包里导入，不再依赖老路径
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_openai import ChatOpenAI
 from langchain.chains import RetrievalQA
-# ==========================================
+# ============================
 
 import os
 
@@ -35,10 +36,12 @@ with st.sidebar:
 def get_pdf_text(pdf_docs):
     text = ""
     for pdf in pdf_docs:
-        # pypdf 的写法稍微不同，但更稳定
+        # 使用 pypdf 读取
         pdf_reader = PdfReader(pdf)
         for page in pdf_reader.pages:
-            text += page.extract_text()
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text
     return text
 
 
@@ -90,3 +93,6 @@ if "vector_store" in st.session_state:
         with st.expander("查看来源"):
             for doc in response["source_documents"]:
                 st.write(doc.page_content)
+else:
+    if not uploaded_files:
+        st.info("👈 请先在左侧上传 PDF 文件")
