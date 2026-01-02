@@ -1,10 +1,9 @@
 streamlit
-openai
+pypdf
 langchain
 langchain-community
+langchain-openai
 langchain-huggingface
 langchain-chroma
 chromadb
 sentence-transformers
-pypdf
-PyPDF2
