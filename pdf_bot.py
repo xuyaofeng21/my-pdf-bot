@@ -1,156 +1,124 @@
 import streamlit as st
+from PyPDF2 import PdfReader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_community.chat_models import ChatOpenAI
+from langchain.chains import RetrievalQA
 import os
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
-from openai import OpenAI
 
-# --- 1. 页面基本设置 ---
-st.set_page_config(page_title="PDF 智能问答", layout="wide")
-st.title("📄 PDF 智能问答助手")
+# --- 1. 页面基础设置 ---
+st.set_page_config(page_title="多文件 AI 助手", layout="wide")
+st.title("📚 多文档 AI 智能问答助手")
 
-# --- 2. 侧边栏：上传文件 & 设置 ---
-
+# --- 2. 侧边栏：安全 Key + 多文件上传 ---
 with st.sidebar:
-    st.header("1. 上传文件")
+    st.header("⚙️ 设置面板")
 
-    # 1. 尝试从云端 Secrets 里拿 Key
-    # 注意：这里的名字 "DEEPSEEK_API_KEY" 必须和你 Secrets 里填的一模一样
+    # === 🔒 安全改进部分 Start ===
+    # 逻辑：优先读 Secrets，不把 Key 显示在输入框里
+    api_key = None
+
     if "DEEPSEEK_API_KEY" in st.secrets:
-        default_key = st.secrets["DEEPSEEK_API_KEY"]
-        key_source = "✅ 已自动加载云端超级key密钥"
+        # 如果云端有 Key，直接用，不回显
+        api_key = st.secrets["DEEPSEEK_API_KEY"]
+        st.success("✅ 云端密钥已激活")
+        st.info("系统已自动加载密钥，无需手动输入。")
     else:
-        default_key = ""
-        key_source = "⚠️ 未检测到云端密钥"
-
-    # 2. 显示状态提示
-    st.caption(key_source)
-
-    # 3. 创建输入框
-    # 如果找到了 Secret，value 就是那个 Key，用户就不用填了
-    # 如果没找到，value 为空，用户需要手动填
-    api_key = st.text_input("DeepSeek API Key", value=default_key, type="password")
-
-    uploaded_file = st.file_uploader("上传 PDF 文件", type=["pdf"])
+        # 如果没有，才显示输入框
+        api_key = st.text_input("请输入 DeepSeek API Key", type="password")
+        if not api_key:
+            st.warning("⚠️ 请输入密钥以开始使用")
+    # === 🔒 安全改进部分 End ===
 
     st.markdown("---")
-    st.markdown("### 🛠️ 处理状态")
-    status_text = st.empty()
 
-# --- 3. 核心逻辑：处理 PDF (如果用户上传了新文件) ---
-# 定义一个路径来存数据库，跟之前的区分开
-DB_PATH = "../pdf_chroma_db"
-
-
-def process_pdf(uploaded_file):
-    """读取PDF -> 切分 -> 存入向量库"""
-    # a. 先把上传的文件存成临时文件
-    temp_file_path = "../temp.pdf"
-    with open(temp_file_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-
-    # b. 加载 PDF
-    loader = PyPDFLoader(temp_file_path)
-    docs = loader.load()
-
-    # c. 切分文档 (Recursive 是更高级的切分器，不仅看字数，还看句号段落)
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
-    splits = text_splitter.split_documents(docs)
-
-    # d. 向量化并入库
-    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    # 创建一个新的数据库
-    vectorstore = Chroma.from_documents(
-        documents=splits,
-        embedding=embeddings,
-        persist_directory=DB_PATH
+    # === 📂 多文件改进部分 Start ===
+    # accept_multiple_files=True 允许选多个
+    uploaded_files = st.file_uploader(
+        "上传 PDF 文件 (支持多个)",
+        type=["pdf"],
+        accept_multiple_files=True
     )
-    return vectorstore
+    # === 📂 多文件改进部分 End ===
+
+    process_button = st.button("🚀 开始分析文档")
 
 
-# --- 4. 初始化 Session State (记忆) ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "vector_db" not in st.session_state:
-    st.session_state.vector_db = None
+# --- 3. 核心函数：处理多个 PDF ---
+def get_pdf_text(pdf_docs):
+    text = ""
+    # 循环遍历每一个上传的文件
+    for pdf in pdf_docs:
+        pdf_reader = PdfReader(pdf)
+        for page in pdf_reader.pages:
+            # 容错处理：有些页可能是空的
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text
+    return text
 
-# --- 5. 只有当用户点击上传，且数据库没准备好时，才去处理 ---
-if uploaded_file and st.session_state.vector_db is None:
-    if not api_key:
-        st.error("请先输入 API Key！")
-    else:
-        with st.spinner("正在阅读 PDF，请稍等... (第一次可能会下载模型)"):
-            try:
-                # 调用上面的函数
-                st.session_state.vector_db = process_pdf(uploaded_file)
-                st.success("PDF 处理完成！现在可以提问了。")
-            except Exception as e:
-                st.error(f"处理失败: {e}")
 
-# --- 6. 聊天界面 ---
-# 显示历史记录
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.write(msg["content"])
+def get_text_chunks(text):
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200
+    )
+    chunks = text_splitter.split_text(text)
+    return chunks
 
-# 处理用户提问
-user_input = st.chat_input("在这个 PDF 里找什么？")
 
-if user_input:
-    # 检查有没有 Key 和 数据库
-    if not api_key:
-        st.warning("请先设置 API Key")
-        st.stop()
-    if st.session_state.vector_db is None:
-        st.warning("请先上传 PDF 文件")
-        st.stop()
+def get_vector_store(text_chunks):
+    # 使用本地轻量级模型
+    embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+    vector_store = Chroma.from_texts(text_chunks, embedding=embeddings)
+    return vector_store
 
-    # A. 显示用户问题
-    with st.chat_message("user"):
-        st.write(user_input)
-    st.session_state.messages.append({"role": "user", "content": user_input})
 
-    # B. 核心 RAG 检索流程
-    with st.chat_message("assistant"):
-        with st.spinner("AI 正在翻书查找..."):
-            # 1. 在数据库里搜
-            db = st.session_state.vector_db
-            docs = db.similarity_search(user_input, k=2)  # 找最相似的2个片段
+# --- 4. 主逻辑 ---
+if process_button and uploaded_files and api_key:
+    with st.spinner("正在疯狂阅读所有文档..."):
+        # 1. 提取所有 PDF 的文字
+        raw_text = get_pdf_text(uploaded_files)
 
-            if not docs:
-                context = "没有在文档中找到相关信息。"
-            else:
-                # 把找到的文字拼起来
-                context = "\n\n".join([d.page_content for d in docs])
+        # 2. 切片
+        text_chunks = get_text_chunks(raw_text)
 
-            # 2. 组装 Prompt
-            prompt = f"""
-            你是一个文档助手。基于以下【参考资料】回答用户问题。
+        # 3. 存入数据库
+        # 注意：这里我们用 st.session_state 把数据库存起来，防止每次提问都重新算
+        vector_store = get_vector_store(text_chunks)
+        st.session_state.vector_store = vector_store
 
-            【参考资料】：
-            {context}
+        st.success(f"✅ 处理完成！共读取了 {len(uploaded_files)} 个文件。")
 
-            【用户问题】：
-            {user_input}
-            """
+# --- 5. 聊天界面 ---
+if "vector_store" in st.session_state:
+    st.markdown("### 💬 开始提问")
+    user_question = st.text_input("关于这些文档，你想问什么？")
 
-            # 3. 调用 DeepSeek
-            client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-            response = client.chat.completions.create(
-                model="deepseek-chat",
-                messages=[
-                    {"role": "system", "content": "你是一个乐于助人的助手。"},
-                    {"role": "user", "content": prompt}
-                ]
-            )
+    if user_question:
+        llm = ChatOpenAI(
+            api_key=api_key,
+            base_url="https://api.deepseek.com/v1",
+            model_name="deepseek-chat",
+            temperature=0.3
+        )
 
-            # 4. 显示答案
-            answer = response.choices[0].message.content
-            st.write(answer)
+        qa_chain = RetrievalQA.from_chain_type(
+            llm=llm,
+            retriever=st.session_state.vector_store.as_retriever(),
+            return_source_documents=True
+        )
 
-            # 5. 既然是 RAG，最好展示一下参考了哪一段（显得专业）
-            with st.expander("查看 AI 参考的原文片段"):
-                st.write(context)
+        response = qa_chain.invoke({"query": user_question})
 
-            st.session_state.messages.append({"role": "assistant", "content": answer})
+        st.write("🤖 **AI 回答:**")
+        st.write(response["result"])
+
+        # (可选) 显示参考了哪一段
+        with st.expander("查看参考来源"):
+            for doc in response["source_documents"]:
+                st.write(doc.page_content)
+else:
+    if not uploaded_files:
+        st.info("👈 请先在左侧上传 PDF 文件")
