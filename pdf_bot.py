@@ -1,14 +1,14 @@
 import streamlit as st
 from pypdf import PdfReader
 
-# === 🛠️ 2025 终极修正版引用 ===
-# 专门从新包里导入，不再依赖老路径
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
-from langchain_openai import ChatOpenAI
+# === 🛡️ 稳定版(0.1.x) 经典引用写法 ===
+# 这些路径在 LangChain 0.1.20 版本里是绝对存在的
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_community.chat_models import ChatOpenAI
 from langchain.chains import RetrievalQA
-# ============================
+# ==========================================
 
 import os
 
@@ -36,12 +36,10 @@ with st.sidebar:
 def get_pdf_text(pdf_docs):
     text = ""
     for pdf in pdf_docs:
-        # 使用 pypdf 读取
         pdf_reader = PdfReader(pdf)
         for page in pdf_reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text
+            t = page.extract_text()
+            if t: text += t
     return text
 
 
@@ -52,6 +50,7 @@ def get_text_chunks(text):
 
 
 def get_vector_store(text_chunks):
+    # 使用本地模型，规避 OpenAiEmbeddings 收费问题
     embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
     vector_store = Chroma.from_texts(text_chunks, embedding=embeddings)
     return vector_store
