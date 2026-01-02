@@ -19,7 +19,7 @@ with st.sidebar:
     # 注意：这里的名字 "DEEPSEEK_API_KEY" 必须和你 Secrets 里填的一模一样
     if "DEEPSEEK_API_KEY" in st.secrets:
         default_key = st.secrets["DEEPSEEK_API_KEY"]
-        key_source = "✅ 已自动加载云端密钥"
+        key_source = "✅ 已自动加载云端key密钥"
     else:
         default_key = ""
         key_source = "⚠️ 未检测到云端密钥"
