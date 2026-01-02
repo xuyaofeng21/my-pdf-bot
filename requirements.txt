@@ -7,3 +7,4 @@ langchain-chroma
 chromadb
 sentence-transformers
 pypdf
+PyPDF2
